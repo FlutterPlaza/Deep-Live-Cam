@@ -9,6 +9,8 @@ import modules.processors.frame.core
 from modules.core import update_status
 from modules.face_analyser import get_one_face
 from modules.typing import Frame, Face
+import platform
+import torch
 from modules.utilities import (
     conditional_download,
     is_image,
@@ -21,7 +23,10 @@ THREAD_LOCK = threading.Lock()
 NAME = "DLC.FACE-ENHANCER"
 
 abs_dir = os.path.dirname(os.path.abspath(__file__))
-models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(abs_dir))), 'models')
+models_dir = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(abs_dir))), "models"
+)
+
 
 def pre_check() -> bool:
     download_directory_path = models_dir
@@ -43,13 +48,44 @@ def pre_start() -> bool:
     return True
 
 
+TENSORRT_AVAILABLE = False
+try:
+    import torch_tensorrt
+    TENSORRT_AVAILABLE = True
+except ImportError as im:
+    print(f"TensorRT is not available: {im}")
+    pass
+except Exception as e:
+    print(f"TensorRT is not available: {e}")
+    pass
+
 def get_face_enhancer() -> Any:
     global FACE_ENHANCER
 
     with THREAD_LOCK:
         if FACE_ENHANCER is None:
-            model_path = os.path.join(models_dir, 'GFPGANv1.4.pth')
-            FACE_ENHANCER = gfpgan.GFPGANer(model_path=model_path, upscale=1)  # type: ignore[attr-defined]
+            model_path = os.path.join(models_dir, "GFPGANv1.4.pth")
+            
+            selected_device = None
+            device_priority = []
+
+            if TENSORRT_AVAILABLE and torch.cuda.is_available():
+                selected_device = torch.device("cuda")
+                device_priority.append("TensorRT+CUDA")
+            elif torch.cuda.is_available():
+                selected_device = torch.device("cuda")
+                device_priority.append("CUDA")
+            elif torch.backends.mps.is_available() and platform.system() == "Darwin":
+                selected_device = torch.device("mps")
+                device_priority.append("MPS")
+            elif not torch.cuda.is_available():
+                selected_device = torch.device("cpu")
+                device_priority.append("CPU")
+            
+            FACE_ENHANCER = gfpgan.GFPGANer(model_path=model_path, upscale=1, device=selected_device)
+
+            # for debug:
+            print(f"Selected device: {selected_device} and device priority: {device_priority}")
     return FACE_ENHANCER
 
 
